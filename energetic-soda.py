@@ -6,6 +6,7 @@ import os
 
 from datetime import datetime
 from sqlalchemy import create_engine,Engine
+from sqlalchemy.sql import text
 from dotenv import load_dotenv,find_dotenv
 
 #INITIALIZATION
@@ -75,9 +76,17 @@ def load_invest_to_lake():
         log(f"set_profile error: {str(e)}")
 
 def trigger_data_processing():
-    with engine.connect() as cnx:
+    cnx = engine.connect()
+    try:
         call = ('CALL' if DB == 'PG' else 'EXEC')
-        cnx.execute(f'{call} process_data()')
+        query = f'{call} process_data();'
+        cnx.execute(text(query))
+        cnx.commit()
+        log(f"Data processed successfully!")
+    except(Exception) as e:
+        log(f"trigger_data_processing error: {str(e)}")
+    finally:
+        cnx.close()
             
 def get_season_data(season:str):
     season = season.strip()
