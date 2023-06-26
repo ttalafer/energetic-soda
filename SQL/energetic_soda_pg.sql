@@ -36,9 +36,9 @@ CREATE TABLE IF NOT EXISTS cds.league_model(
 	half_score_away		INT,
 	final_score_home	INT,
 	final_score_away	INT,
-	winner				TEXT GENERATED ALWAYS AS (CASE WHEN final_score_home > final_score_away THEN 'home'
-								WHEN final_score_home = final_score_away THEN 'draw'
-								WHEN final_score_home < final_score_away THEN 'away'
+	winner				TEXT GENERATED ALWAYS AS (CASE WHEN final_score_home > final_score_away THEN 'HOME'
+								WHEN final_score_home = final_score_away THEN 'DRAW'
+								WHEN final_score_home < final_score_away THEN 'AWAY'
 								END) STORED
 );
 
@@ -56,6 +56,74 @@ CREATE TABLE IF NOT EXISTS cds.invest_model(
 
 CREATE UNIQUE INDEX IF NOT EXISTS cds_invest_model_key 
 ON cds.invest_model(team);
+
+-----------------------------------------------------------------
+-- VIEWS
+-----------------------------------------------------------------
+
+CREATE OR REPLACE VIEW cds.season_data
+AS
+WITH general_season AS (
+    SELECT DISTINCT 
+        l.season season,
+        l.home_team team
+    FROM cds.league_model l
+),
+home_score AS (
+    SELECT  l.season,
+            l.home_team team,
+            SUM(l.final_score_home)goals_favor,
+            SUM(l.final_score_away)goals_against,
+            SUM(CASE WHEN l.winner = 'HOME' THEN 3 WHEN l.winner = 'DRAW' THEN 1 ELSE 0 END) points,
+            SUM(CASE WHEN l.winner = 'HOME' THEN 1 ELSE 0 END) wins,
+            SUM(CASE WHEN l.winner = 'DRAW' THEN 1 ELSE 0 END) draws,
+            SUM(CASE WHEN l.winner = 'AWAY' THEN 1 ELSE 0 END) losses,
+            COUNT(l.match_date) games_played
+    FROM cds.league_model l
+    GROUP BY l.season,l.home_team
+),
+away_score AS(
+    SELECT  l.season,
+            l.away_team team,
+            SUM(l.final_score_away)goals_favor,
+            SUM(l.final_score_home)goals_against,
+            SUM(CASE WHEN l.winner = 'AWAY' THEN 3 WHEN l.winner = 'DRAW' THEN 1 ELSE 0 END) points,
+            SUM(CASE WHEN l.winner = 'AWAY' THEN 1 ELSE 0 END) wins,
+            SUM(CASE WHEN l.winner = 'DRAW' THEN 1 ELSE 0 END) draws,
+            SUM(CASE WHEN l.winner = 'HOME' THEN 1 ELSE 0 END) losses,
+            COUNT(l.match_date) games_played
+    FROM cds.league_model l
+    GROUP BY l.season,l.away_team
+),
+total_score AS(
+    SELECT
+        a.season, 
+        a.team, 
+        (a.goals_favor + h.goals_favor) goals_favor,
+        (a.goals_against + h.goals_against) goals_against,
+        (a.points + h.points) points,
+        (a.wins + h.wins )wins,
+        (a.draws + h.draws )draws,
+        (a.losses + h.losses )losses,
+        (a.games_played + h.games_played) games_played
+    FROM away_score a
+    JOIN home_score h ON a.season = h.season AND a.team = h.team
+    ORDER BY a.season ASC, a.team
+)
+
+SELECT 
+    s.season::TEXT,
+    s.team::TEXT,
+    t.points::INT total_points,
+    t.games_played::INT,
+    t.goals_against::INT,
+    t.draws::INT,
+    t.wins::INT,
+    t.losses::INT,
+    t.goals_favor::INT,
+    ((t.wins::FLOAT/t.games_played::FLOAT)*100.00)::NUMERIC(18,2) win_ratio
+FROM general_season s
+JOIN total_score t ON s.team = t.team AND s.season = t.season;
 
 -----------------------------------------------------------------
 -- PROCESSING
@@ -133,71 +201,22 @@ RETURNS TABLE(
 LANGUAGE plpgsql
 AS $$
 BEGIN
-	DROP TABLE IF EXISTS _general_season;
-	CREATE TEMP TABLE _general_season AS
-	SELECT DISTINCT 
-		l.season season,
-		l.home_team team
-	FROM cds.league_model l
-	WHERE l.season like _season;
-
-	DROP TABLE IF EXISTS total_score;
-	CREATE TEMP TABLE total_score AS
-	WITH home_score AS (
-		SELECT  l.season,
-				l.home_team team,
-				SUM(l.final_score_home)goals_favor,
-				SUM(l.final_score_away)goals_against,
-				SUM(CASE WHEN l.winner = 'HOME' THEN 3 WHEN l.winner = 'DRAW' THEN 1 ELSE 0 END) points,
-				SUM(CASE WHEN l.winner = 'HOME' THEN 1 ELSE 0 END) wins,
-				SUM(CASE WHEN l.winner = 'DRAW' THEN 1 ELSE 0 END) draws,
-				SUM(CASE WHEN l.winner = 'AWAY' THEN 1 ELSE 0 END) losses,
-				COUNT(l.match_date) games_played
-		FROM cds.league_model l
-		GROUP BY l.season,l.home_team
-	),
-	away_score AS(
-		SELECT  l.season,
-				l.away_team team,
-				SUM(l.final_score_away)goals_favor,
-				SUM(l.final_score_home)goals_against,
-				SUM(CASE WHEN l.winner = 'AWAY' THEN 3 WHEN l.winner = 'DRAW' THEN 1 ELSE 0 END) points,
-				SUM(CASE WHEN l.winner = 'AWAY' THEN 1 ELSE 0 END) wins,
-				SUM(CASE WHEN l.winner = 'DRAW' THEN 1 ELSE 0 END) draws,
-				SUM(CASE WHEN l.winner = 'HOME' THEN 1 ELSE 0 END) losses,
-				COUNT(l.match_date) games_played
-		FROM cds.league_model l
-		GROUP BY l.season,l.away_team
-	)
 	
-	SELECT
-		a.season, 
-		a.team, 
-		(a.goals_favor + h.goals_favor) goals_favor,
-		(a.goals_against + h.goals_against) goals_against,
-		(a.points + h.points) points,
-		(a.wins + h.wins )wins,
-		(a.draws + h.draws )draws,
-		(a.losses + h.losses )losses,
-		(a.games_played + h.games_played) games_played
-	FROM away_score a
-	JOIN home_score h ON a.season = h.season AND a.team = h.team
-	ORDER BY a.season ASC, a.team;
-
-
 	RETURN QUERY SELECT 
 		s.season::TEXT,
 		s.team::TEXT,
-		t.points::INT total_points,
-		t.games_played::INT,
-		t.goals_against::INT,
-		t.draws::INT,
-		t.wins::INT,
-		t.losses::INT,
-		t.goals_favor::INT,
-		((t.wins::FLOAT/t.games_played::FLOAT)*100.00)::NUMERIC(18,2) win_ratio
-	FROM _general_season s
-	JOIN total_score t ON s.team = t.team AND s.season = t.season;
+		s.total_points::INT,
+		s.games_played::INT,
+		s.goals_against::INT,
+		s.draws::INT,
+		s.wins::INT,
+		s.losses::INT,
+		s.goals_favor::INT,
+		s.win_ratio
+	FROM cds.season_data s
+	WHERE s.season = _season;
 
 END;
 $$;
+
+select * from get_season('2008-09')
