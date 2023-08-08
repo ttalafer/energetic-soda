@@ -1,5 +1,5 @@
 # ENERGETIC SODA PIPELINE
-EnhanceHealth Coding challenge
+ExtendHealth Coding challenge
 ---
 ## TECH
 Solution was implemented the following technologies:
